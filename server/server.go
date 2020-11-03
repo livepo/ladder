@@ -25,6 +25,7 @@ func NewServer(listenaddr string) *Server {
 
 
 func (s *Server) Serve() {
+
     ln, err := net.Listen("tcp", s.ListenAddr)
     if err != nil {
         fmt.Println("listen error", err)
