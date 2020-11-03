@@ -1,118 +1,112 @@
 package server
 
+
 import (
     "fmt"
-    "ladder/cipher"
     "net"
+    "gosocks/tunnel"
+    "gosocks/cipher"
     "bufio"
-    "io"
     "encoding/binary"
+    "errors"
 )
 
 
 type Server struct {
-    Addr string
+    ListenAddr string
 }
 
 
-func NewServer(addr string) *Server {
-    return &Server{
-        Addr: addr,
+func NewServer(listenaddr string) *Server {
+    return &Server {
+        ListenAddr: listenaddr,
     }
 }
 
-
-func checkError(err error) {
-    if err != nil && err != io.EOF {
-        panic(err)
-    }
-}
 
 func (s *Server) Serve() {
-    ln, err := net.Listen("tcp", s.Addr)
-    checkError(err)
+    ln, err := net.Listen("tcp", s.ListenAddr)
+    if err != nil {
+        fmt.Println("listen error", err)
+    }
     for {
-        proxy, err := ln.Accept()
-        checkError(err)
-        go s.HandleProxy(proxy)
-    }
-}
-
-
-func (s *Server) HandleProxy(proxy net.Conn) {
-
-    reader := bufio.NewReader(proxy)
-    buf := make([]byte, 1024)
-    nsize, err := reader.Read(buf)
-    if err != nil && err != io.EOF {
-        return
-    }
-    if nsize > 0 {
-        cipher.Decode(buf[:nsize])
-        if buf[0] != 0x05 {
-            return
-        }
-        authorized := []byte{0x05, 0x00}
-        cipher.Encode(authorized)
-        proxy.Write(authorized)
-    }
-    nsize, err = reader.Read(buf)
-    if err != nil && err != io.EOF {
-        return
-    }
-    var realip []byte
-    if nsize > 0 {
-        cipher.Decode(buf[:nsize])
-        switch buf[3] {
-        case 0x01:
-            // IP V4 address: X'01'
-            realip = buf[4:4+net.IPv4len]
-        case 0x03:
-            // DOMAINNAME: X'03'
-            ipAddr, err := net.ResolveIPAddr("ip", string(buf[5:nsize-2]))
-            if err != nil {
-                return
-            }
-            realip = ipAddr.IP
-        case 0x04:
-            // IP V6 address: X'04'
-            realip = buf[4:4+net.IPv6len]
-        default:
-            return
-        }
-        host := net.IP(realip).String()
-        port := int(binary.BigEndian.Uint16(buf[nsize-2:]))
-        remote, err := net.Dial("tcp", fmt.Sprintf("%s:%d", host, port))
+        client, err := ln.Accept()
         if err != nil {
-            fmt.Println("connect remote error", err)
-            return
+            fmt.Println("accept error", err)
         }
-        connected := []byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-        cipher.Encode(connected)
-        proxy.Write(connected)
-        go Transport(remote, proxy, cipher.Decode)
-        go Transport(proxy, remote, cipher.Encode)
+        go s.HandleClient(client)
     }
 }
 
 
-type CiphAction func([]byte)
-
-
-func Transport(dst net.Conn, src net.Conn, ca CiphAction) {
-    reader := bufio.NewReader(src)
-    buf := make([]byte, 1024)
-    for {
-        nsize, err := reader.Read(buf)
-        if err != nil && err != io.EOF {
-            fmt.Println("read err", err)
-            return
-        }
-        if nsize > 0 {
-            ca(buf)
-            dst.Write(buf[:nsize])
-        } else {
-            return
-        }
+func (s *Server) HandleClient(client net.Conn) {
+    reader := bufio.NewReader(client)
+    buf := make([]byte, 64)
+    nsize, err := reader.Read(buf)
+    if err != nil {
+        fmt.Println("socks5 parse error", err)
+        return
     }
+    cipher.Decode(buf[:nsize])
+    if nsize == 0 || buf[0] != 0x05 {
+        fmt.Println("socks5 parse error", err)
+        return
+    }
+    resp1 := []byte{0x05, 0x00}
+    cipher.Encode(resp1)
+    nsize, err = client.Write(resp1)
+    if err != nil {
+        fmt.Println("resp socks5 ack error", err)
+        return
+    }
+
+    nsize, err = reader.Read(buf)
+    if err != nil {
+        fmt.Println("socks5 parse error", err)
+        return
+    }
+    cipher.Decode(buf)
+    remoteAddr, err := s.parseRemote(buf[:nsize])
+    if err != nil {
+        fmt.Println("parse remote addr error", err)
+        return
+    }
+    remote, err := net.Dial("tcp", remoteAddr)
+    if err != nil {
+        fmt.Println("connect remote error", err)
+        return
+    }
+    resp2 := []byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+    cipher.Encode(resp2)
+    nsize, err = client.Write(resp2)
+    if err != nil {
+        fmt.Println("resp socks5 ack error", err)
+        return
+    }
+    go tunnel.Transport(remote, client, cipher.Decode)
+    go tunnel.Transport(client, remote, cipher.Encode)
+}
+
+
+func (s *Server) parseRemote(buf []byte) (string, error) {
+    var dIP, dPort []byte
+    switch buf[3] {
+    case 0x01:
+        //	IP V4 address: X'01'
+        dIP = buf[4 : 4+net.IPv4len]
+    case 0x03:
+        //	DOMAINNAME: X'03'
+        ipAddr, err := net.ResolveIPAddr("ip", string(buf[5:len(buf)-2]))
+        if err != nil {
+            return "", err
+        }
+        dIP = ipAddr.IP
+    case 0x04:
+        //	IP V6 address: X'04'
+        dIP = buf[4 : 4+net.IPv6len]
+    default:
+        return "", errors.New("parse remote addr error")
+    }
+    dPort = buf[len(buf)-2:]
+    return fmt.Sprintf("%s:%d", net.IP(dIP).String(), binary.BigEndian.Uint16(dPort)), nil
 }

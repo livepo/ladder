@@ -1,10 +1,11 @@
 package main
+
 import (
-    "ladder/server"
+    "gosocks/server"
 )
 
 
 func main() {
-    srv := server.NewServer(":2020")
-    srv.Serve()
+    serv := server.NewServer(":2020")
+    serv.Serve()
 }

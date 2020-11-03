@@ -1,10 +1,11 @@
 package main
 
-
-import "ladder/local"
+import (
+    "gosocks/local"
+)
 
 
 func main() {
-    loc := local.NewLocal(":1919", "your-remote-address:2020")
+    loc := local.NewLocal(":1919" ,":2020")
     loc.Serve()
 }

@@ -1,101 +1,50 @@
 package local
 
+
 import (
     "fmt"
-    "ladder/cipher"
     "net"
-    "bufio"
-    "io"
+    "gosocks/cipher"
+    "gosocks/tunnel"
 )
 
 
 type Local struct {
-    LocalAddr string
+    ListenAddr string
     RemoteAddr string
 }
 
-func NewLocal(localaddr, remoteaddr string) *Local {
+
+func NewLocal(listenaddr, remoteaddr string) *Local {
     return &Local{
-        LocalAddr: localaddr,
+        ListenAddr: listenaddr,
         RemoteAddr: remoteaddr,
     }
 }
 
 
-func checkError(err error) {
-    if err != nil && err != io.EOF {
-        panic(err)
-    }
-}
-
 func (l *Local) Serve() {
-    ln, err := net.Listen("tcp", l.LocalAddr)
-    checkError(err)
+    ln, err := net.Listen("tcp", l.ListenAddr)
+    if err != nil {
+        fmt.Println(err)
+        return
+    }
 
     for {
         client, err := ln.Accept()
-        checkError(err)
-        go l.handleClient(client)
-    }
-}
-
-
-func (l *Local) handleClient(client net.Conn) {
-    browserMsg := make(chan []byte)
-    go l.readClient(client, browserMsg)  // 读客户端数据, 加密，生产者
-    go l.transportClient(client, browserMsg)  // 转发客户端数据, 回写客户端, 消费者
-}
-
-
-func (l *Local) readClient(client net.Conn, browserMsg chan []byte) {
-    defer client.Close()
-    defer close(browserMsg)
-
-    reader := bufio.NewReader(client)
-    buf := make([]byte, 1024)
-    for {
-        nsize, err := reader.Read(buf)
-        if err != nil && err != io.EOF {
-            return
-        }
-        if nsize > 0 {
-            cipher.Encode(buf[:nsize])
-            browserMsg <- buf[:nsize]
-        }
-    }
-}
-
-
-func (l *Local) transportClient(client net.Conn, browserMsg chan []byte) {
-    remote, err := net.Dial("tcp", l.RemoteAddr)
-    checkError(err)
-    go l.remoteToClient(client, remote)
-    for message := range browserMsg {
-        nsize, err := remote.Write(message)
         if err != nil {
-            fmt.Println("write to remote err", err)
-            return
+            fmt.Println("accept error", err)
         }
-        if nsize < len(message) {
-            fmt.Println("write to remote nsize error")
-        }
+        go l.HandleClient(client)
     }
 }
 
 
-func (l *Local) remoteToClient(client net.Conn, remote net.Conn) {
-    buf := make([]byte, 1024)
-    reader := bufio.NewReader(remote)
-    for {
-        nsize, err := reader.Read(buf)
-        if err != nil && err != io.EOF {
-            fmt.Println("read remote error", err)
-            return
-        }
-        if nsize > 0 {
-            cipher.Decode(buf[:nsize])
-            client.Write(buf[:nsize])
-        }
+func (l *Local) HandleClient(client net.Conn) {
+    remote, err := net.Dial("tcp", l.RemoteAddr)
+    if err != nil {
+        return
     }
+    go tunnel.Transport(remote, client, cipher.Encode)
+    go tunnel.Transport(client, remote, cipher.Decode)
 }
-
