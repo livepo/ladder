@@ -9,5 +9,5 @@
 TODO:
 
 - [x]  代理
-- [ ] 支持vmess, shadowsocks协议
+- [ ] 兼容vmess协议
 - [ ] 更多加密方案
