@@ -8,6 +8,7 @@ import (
 	"gosocks/cipher"
 	"gosocks/tunnel"
 	"net"
+	"strings"
 )
 
 type Server struct {
@@ -67,7 +68,14 @@ func (s *Server) HandleClient(client net.Conn) {
 		fmt.Println("parse remote addr error", err)
 		return
 	}
-	remote, err := net.Dial("tcp", remoteAddr)
+	var remote net.Conn
+	if strings.Count(remoteAddr, ":") < 2 {
+		// ipv4
+		remote, err = net.Dial("tcp", remoteAddr)
+	} else {
+		// ipv6
+		remote, err = net.Dial("tcp6", remoteAddr)
+	}
 	if err != nil {
 		fmt.Println("connect remote error", err)
 		return
@@ -103,5 +111,12 @@ func (s *Server) parseRemote(buf []byte) (string, error) {
 		return "", errors.New("parse remote addr error")
 	}
 	dPort = buf[len(buf)-2:]
-	return fmt.Sprintf("%s:%d", net.IP(dIP).String(), binary.BigEndian.Uint16(dPort)), nil
+	var remote string
+	if len(dIP) == 4 {
+		remote = fmt.Sprintf("%s:%d", net.IP(dIP).String(), binary.BigEndian.Uint16(dPort))
+	} else {
+		remote = fmt.Sprintf("[%s]:%d", net.IP(dIP).String(), binary.BigEndian.Uint16(dPort))
+	}
+	fmt.Println("parse remote address: ", remote)
+	return remote, nil
 }
