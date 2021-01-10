@@ -1,0 +1,18 @@
+[Unit]
+Description=ladder
+Documentation=https://livepo.github.io/livepo
+After=network.target network-online.target nss-lookup.target
+
+[Service]
+Type=simple
+StandardError=journal
+WorkingDirectory=/root/ladder
+ExecStart=/root/ladder/ladder-server
+ExecStop=/bin/kill -9 $MAINPID
+ExecReload=/bin/kill -HUP $MAINPID
+LimitNOFILE=51200
+Restart=on-failure
+RestartSec=1s
+
+[Install]
+WantedBy=multi-user.target
